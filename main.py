@@ -7,7 +7,6 @@ import os
 import argparse
 import random
 
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 seed = 1538574472
 random.seed(seed)
@@ -20,10 +19,9 @@ parser.add_argument('--action', default='train')
 parser.add_argument('--dataset', default="gtea")
 parser.add_argument('--split', default='1')
 
-parser.add_argument('--features_dim', default='2048', type=int)
+parser.add_argument('--features_dim', default='1280', type=int)
 parser.add_argument('--bz', default='1', type=int)
 parser.add_argument('--lr', default='0.0005', type=float)
-
 
 parser.add_argument('--num_f_maps', default='64', type=int)
 
@@ -52,15 +50,22 @@ sample_rate = 1
 if args.dataset == "50salads":
     sample_rate = 2
 
-vid_list_file = "./data/"+args.dataset+"/splits/train.split"+args.split+".bundle"
-vid_list_file_tst = "./data/"+args.dataset+"/splits/test.split"+args.split+".bundle"
-features_path = "./data/"+args.dataset+"/features/"
-gt_path = "./data/"+args.dataset+"/groundTruth/"
+# vid_list_file = "./data/"+args.dataset+"/splits/train.split"+args.split+".bundle"
+vid_list_file = "/datashare/APAS/folds/valid 0.txt"
+# vid_list_file_tst = "./data/"+args.dataset+"/splits/test.split"+args.split+".bundle"
+vid_list_file_tst = "/datashare/APAS/folds/test 0.txt"
+# features_path = "./data/"+args.dataset+"/features/"
+features_path = "/datashare/APAS/features/fold0/"
+# gt_path = "./data/"+args.dataset+"/groundTruth/"
+gt_path = '/datashare/APAS/transcriptions_gestures/'
 
-mapping_file = "./data/"+args.dataset+"/mapping.txt"
+# mapping_file = "./data/" + args.dataset + "/mapping.txt"
+mapping_file = "/datashare/APAS/mapping_gestures.txt"
 
-model_dir = "./models/"+args.dataset+"/split_"+args.split
-results_dir = "./results/"+args.dataset+"/split_"+args.split
+# model_dir = "./models/"+args.dataset+"/split_"+args.split
+model_dir = "./models/test"
+# results_dir = "./results/"+args.dataset+"/split_"+args.split
+results_dir = "./results/test"
 
 if not os.path.exists(model_dir):
     os.makedirs(model_dir)
@@ -75,12 +80,13 @@ for a in actions:
     actions_dict[a.split()[1]] = int(a.split()[0])
 
 num_classes = len(actions_dict)
-trainer = Trainer(num_layers_PG, num_layers_R, num_R, num_f_maps, features_dim, num_classes, args.dataset, args.split)
+# trainer = Trainer(num_layers_PG, num_layers_R, num_R, num_f_maps, features_dim, num_classes, args.dataset, args.split)
+trainer = Trainer(num_layers_PG, num_layers_R, num_R, num_f_maps, features_dim, num_classes, "fold0", "fold0")
 if args.action == "train":
     batch_gen = BatchGenerator(num_classes, actions_dict, gt_path, features_path, sample_rate)
     batch_gen.read_data(vid_list_file)
     trainer.train(model_dir, batch_gen, num_epochs=num_epochs, batch_size=bz, learning_rate=lr, device=device)
 
 if args.action == "predict":
-    trainer.predict(model_dir, results_dir, features_path, vid_list_file_tst, num_epochs, actions_dict, device, sample_rate)
-
+    trainer.predict(model_dir, results_dir, features_path, vid_list_file_tst, num_epochs, actions_dict, device,
+                    sample_rate)
