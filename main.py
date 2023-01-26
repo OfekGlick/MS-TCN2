@@ -1,5 +1,5 @@
 #!/usr/bin/python2.7
-
+from clearml import Task, Logger
 import torch
 from model import Trainer
 from batch_gen import BatchGenerator
@@ -89,13 +89,15 @@ for a in actions:
     actions_dict[a.split()[1]] = int(a.split()[0])
 
 num_classes = len(actions_dict)
-# trainer = Trainer(num_layers_PG, num_layers_R, num_R, num_f_maps, features_dim, num_classes, args.dataset, args.split)
 
+task = Task.init(project_name='CVSA - Final project', task_name='Weighted MS-TCN++')
+clogger = task.get_logger()
+
+print("Starting training!")
 if args.action == "train":
     for val_path_fold, test_path_fold, features_path_fold in fold_files:
         fold_num = features_path_fold.split("/")[-2]
-        trainer = Trainer(num_layers_PG, num_layers_R, num_R, num_f_maps, features_dim, num_classes, fold_num, fold_num)
-
+        print(f"\t{fold_num}")
         vid_list_file, vid_list_file_val, vid_list_file_test = fold_split(features_path_fold, val_path_fold,
                                                                           test_path_fold)
         batch_gen_train = BatchGenerator(num_classes, actions_dict, gt_path, features_path_fold, sample_rate)
@@ -104,10 +106,19 @@ if args.action == "train":
         batch_gen_val = BatchGenerator(num_classes, actions_dict, gt_path, features_path_fold, sample_rate)
 
         batch_gen_val.read_data(vid_list_file_val)
-
+        # Regular
+        trainer = Trainer(num_layers_PG, num_layers_R, num_R, num_f_maps, features_dim, num_classes, fold_num, fold_num)
         trainer.train(model_dir, batch_gen_train, batch_gen_val, num_epochs=num_epochs, batch_size=bz, learning_rate=lr,
-                      device=device)
-        trainer.predict(model_dir, results_dir, features_path, vid_list_file_val, num_epochs, actions_dict, device,
+                      device=device, clogger=clogger)
+        trainer.predict(model_dir, results_dir, features_path_fold, vid_list_file_test, num_epochs, actions_dict,
+                        device, sample_rate)
+        # Weighted
+        trainer = Trainer(num_layers_PG, num_layers_R, num_R, num_f_maps, features_dim, num_classes, fold_num, fold_num,
+                          weighted=1)
+        trainer.train(model_dir, batch_gen_train, batch_gen_val, num_epochs=num_epochs, batch_size=bz, learning_rate=lr,
+                      device=device, clogger=clogger)
+        trainer.predict(model_dir, results_dir, features_path_fold, vid_list_file_test, num_epochs, actions_dict,
+                        device,
                         sample_rate)
 
 # if args.action == "predict":

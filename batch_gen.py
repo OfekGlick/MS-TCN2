@@ -17,11 +17,6 @@ class BatchGenerator(object):
         self.sample_rate = sample_rate
 
     def convert_file_to_list(self, path):
-        """
-        Explodes concise tool usage file to a list of ground truths for each file (arm) passed to it
-        :param df:
-        :return:
-        """
         df = pd.read_csv(path, header=None, sep=' ', names=['start', 'end', 'label'])
         ground_truth = np.zeros(df.iloc[-1, 1])  # last row end time, maximum time
         for index, row in df.iterrows():
