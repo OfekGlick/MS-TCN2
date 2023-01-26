@@ -6,6 +6,8 @@ from batch_gen import BatchGenerator
 import os
 import argparse
 import random
+from os import listdir
+from os.path import isfile, join
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 seed = 1538574472
@@ -50,22 +52,29 @@ sample_rate = 1
 if args.dataset == "50salads":
     sample_rate = 2
 
-# vid_list_file = "./data/"+args.dataset+"/splits/train.split"+args.split+".bundle"
-vid_list_file = "/datashare/APAS/folds/valid 0.txt"
-# vid_list_file_tst = "./data/"+args.dataset+"/splits/test.split"+args.split+".bundle"
-vid_list_file_tst = "/datashare/APAS/folds/test 0.txt"
-# features_path = "./data/"+args.dataset+"/features/"
-features_path = "/datashare/APAS/features/fold0/"
-# gt_path = "./data/"+args.dataset+"/groundTruth/"
+all_vids = []
+
+
+def fold_split(features_path, val_path, test_path):
+    with open(val_path, 'r') as f:
+        val_files = [vid.split('.')[0] + '.npy' for vid in f.readlines()]
+    with open(test_path, 'r') as f:
+        test_files = [vid.split('.')[0] + '.npy' for vid in f.readlines()]
+    train_files = [f for f in listdir(features_path) if isfile(join(features_path, f))]
+    train_files = list(set(train_files) - set(test_files + val_files))
+    return train_files, val_files, test_files
+
+
+fold_files = [(f"/datashare/APAS/folds/valid {i}.txt",
+               f"/datashare/APAS/folds/test {i}.txt",
+               f"/datashare/APAS/features/fold{i}/") for i in range(5)]
+
 gt_path = '/datashare/APAS/transcriptions_gestures/'
-
-# mapping_file = "./data/" + args.dataset + "/mapping.txt"
 mapping_file = "/datashare/APAS/mapping_gestures.txt"
-
-# model_dir = "./models/"+args.dataset+"/split_"+args.split
 model_dir = "./models/test"
-# results_dir = "./results/"+args.dataset+"/split_"+args.split
 results_dir = "./results/test"
+
+features_path = "/datashare/APAS/features/"
 
 if not os.path.exists(model_dir):
     os.makedirs(model_dir)
@@ -81,12 +90,26 @@ for a in actions:
 
 num_classes = len(actions_dict)
 # trainer = Trainer(num_layers_PG, num_layers_R, num_R, num_f_maps, features_dim, num_classes, args.dataset, args.split)
-trainer = Trainer(num_layers_PG, num_layers_R, num_R, num_f_maps, features_dim, num_classes, "fold0", "fold0")
-if args.action == "train":
-    batch_gen = BatchGenerator(num_classes, actions_dict, gt_path, features_path, sample_rate)
-    batch_gen.read_data(vid_list_file)
-    trainer.train(model_dir, batch_gen, num_epochs=num_epochs, batch_size=bz, learning_rate=lr, device=device)
 
-if args.action == "predict":
-    trainer.predict(model_dir, results_dir, features_path, vid_list_file_tst, num_epochs, actions_dict, device,
-                    sample_rate)
+if args.action == "train":
+    for val_path_fold, test_path_fold, features_path_fold in fold_files:
+        fold_num = features_path_fold.split("/")[-2]
+        trainer = Trainer(num_layers_PG, num_layers_R, num_R, num_f_maps, features_dim, num_classes, fold_num, fold_num)
+
+        vid_list_file, vid_list_file_val, vid_list_file_test = fold_split(features_path_fold, val_path_fold,
+                                                                          test_path_fold)
+        batch_gen_train = BatchGenerator(num_classes, actions_dict, gt_path, features_path_fold, sample_rate)
+
+        batch_gen_train.read_data(vid_list_file)
+        batch_gen_val = BatchGenerator(num_classes, actions_dict, gt_path, features_path_fold, sample_rate)
+
+        batch_gen_val.read_data(vid_list_file_val)
+
+        trainer.train(model_dir, batch_gen_train, batch_gen_val, num_epochs=num_epochs, batch_size=bz, learning_rate=lr,
+                      device=device)
+        trainer.predict(model_dir, results_dir, features_path, vid_list_file_val, num_epochs, actions_dict, device,
+                        sample_rate)
+
+# if args.action == "predict":
+#     trainer.predict(model_dir, results_dir, features_path, vid_list_file_tst, num_epochs, actions_dict, device,
+#                     sample_rate)

@@ -128,20 +128,23 @@ class Trainer:
         self.ce = nn.CrossEntropyLoss(ignore_index=-100)
         self.mse = nn.MSELoss(reduction='none')
         self.num_classes = num_classes
+        self.fold = split
 
         logger.add('logs/' + dataset + "_" + split + "_{time}.log")
         logger.add(sys.stdout, colorize=True, format="{message}")
 
-    def train(self, save_dir, batch_gen, num_epochs, batch_size, learning_rate, device):
+    def train(self, save_dir, batch_gen_train, batch_gen_val, num_epochs, batch_size, learning_rate, device):
         self.model.train()
         self.model.to(device)
         optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
+        best_acc = 0
         for epoch in range(num_epochs):
-            epoch_loss = 0
-            correct = 0
-            total = 0
-            while batch_gen.has_next():
-                batch_input, batch_target, mask = batch_gen.next_batch(batch_size)
+            epoch_loss_train = 0
+            correct_train = 0
+            total_train = 0
+            self.model.train()
+            while batch_gen_train.has_next():
+                batch_input, batch_target, mask = batch_gen_train.next_batch(batch_size)
                 batch_input, batch_target, mask = batch_input.to(device), batch_target.to(device), mask.to(device)
                 optimizer.zero_grad()
                 predictions = self.model(batch_input)
@@ -153,20 +156,48 @@ class Trainer:
                         self.mse(F.log_softmax(p[:, :, 1:], dim=1), F.log_softmax(p.detach()[:, :, :-1], dim=1)), min=0,
                         max=16) * mask[:, :, 1:])
 
-                epoch_loss += loss.item()
+                epoch_loss_train += loss.item()
                 loss.backward()
                 optimizer.step()
 
                 _, predicted = torch.max(predictions[-1].data, 1)
-                correct += ((predicted == batch_target).float() * mask[:, 0, :].squeeze(1)).sum().item()
-                total += torch.sum(mask[:, 0, :]).item()
+                correct_train += ((predicted == batch_target).float() * mask[:, 0, :].squeeze(1)).sum().item()
+                total_train += torch.sum(mask[:, 0, :]).item()
 
-            batch_gen.reset()
-            torch.save(self.model.state_dict(), save_dir + "/epoch-" + str(epoch + 1) + ".model")
-            torch.save(optimizer.state_dict(), save_dir + "/epoch-" + str(epoch + 1) + ".opt")
+            epoch_loss_val = 0
+            correct_val = 0
+            total_val = 0
+            self.model.eval()
+            while batch_gen_val.has_next():
+                batch_input, batch_target, mask = batch_gen_val.next_batch(batch_size)
+                batch_input, batch_target, mask = batch_input.to(device), batch_target.to(device), mask.to(device)
+                predictions = self.model(batch_input)
+                loss = 0
+                for p in predictions:
+                    loss += self.ce(p.transpose(2, 1).contiguous().view(-1, self.num_classes), batch_target.view(-1))
+                    loss += 0.15 * torch.mean(torch.clamp(
+                        self.mse(F.log_softmax(p[:, :, 1:], dim=1), F.log_softmax(p.detach()[:, :, :-1], dim=1)), min=0,
+                        max=16) * mask[:, :, 1:])
+
+                epoch_loss_val += loss.item()
+                _, predicted = torch.max(predictions[-1].data, 1)
+                correct_val += ((predicted == batch_target).float() * mask[:, 0, :].squeeze(1)).sum().item()
+                total_val += torch.sum(mask[:, 0, :]).item()
+
+            batch_gen_train.reset()
+            batch_gen_val.reset()
+            if float(correct_val) / total_val > best_acc:
+                best_acc = float(correct_val) / total_val
+                torch.save(self.model.state_dict(), save_dir + "/best" + self.fold + ".model")
+                torch.save(optimizer.state_dict(), save_dir + "/best" + self.fold + ".opt")
             logger.info(
-                "[epoch %d]: epoch loss = %f,   acc = %f" % (epoch + 1, epoch_loss / len(batch_gen.list_of_examples),
-                                                             float(correct) / total))
+                "[epoch %d]: epoch loss train set = %f,   acc_train = %f" % (
+                    epoch + 1, epoch_loss_train / len(batch_gen_train.list_of_examples),
+                    float(correct_train) / total_train))
+            logger.info(
+                "[epoch %d]: epoch loss validation set = %f,   acc_val = %f" % (
+                    epoch + 1, epoch_loss_val / len(batch_gen_val.list_of_examples),
+                    float(correct_val) / total_val))
 
     def predict(self, model_dir, results_dir, features_path, vid_list_file, epoch, actions_dict, device, sample_rate):
         self.model.eval()
