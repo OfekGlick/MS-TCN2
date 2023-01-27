@@ -8,21 +8,28 @@ from torch import optim
 import copy
 import numpy as np
 from loguru import logger
-from clearml import Task, Logger
+from eval import f_score
 
 
 class MS_TCN2(nn.Module):
-    def __init__(self, num_layers_PG, num_layers_R, num_R, num_f_maps, dim, num_classes):
+    def __init__(self, num_layers_PG, num_layers_R, num_R, num_f_maps, dim, num_classes, weighted=False):
         super(MS_TCN2, self).__init__()
         self.PG = Prediction_Generation(num_layers_PG, num_f_maps, dim, num_classes)
         self.Rs = nn.ModuleList(
             [copy.deepcopy(Refinement(num_layers_R, num_f_maps, num_classes, num_classes)) for s in range(num_R)])
+        #   Added by us
+        self.weighted = weighted
+        self.Ws = nn.ParameterList(
+            [copy.deepcopy(nn.Parameter(data=torch.rand(1), requires_grad=True)) for s in range(num_R)])
 
     def forward(self, x):
         out = self.PG(x)
         outputs = out.unsqueeze(0)
-        for R in self.Rs:
-            out = R(F.softmax(out, dim=1))
+        for R, W in zip(self.Rs, self.Ws):
+            if self.weighted:
+                out = W * R(F.softmax(out, dim=1))
+            else:
+                out = R(F.softmax(out, dim=1))
             outputs = torch.cat((outputs, out.unsqueeze(0)), dim=0)
         return outputs
 
@@ -126,7 +133,7 @@ class DilatedResidualLayer(nn.Module):
 class Trainer:
     def __init__(self, num_layers_PG, num_layers_R, num_R, num_f_maps, dim, num_classes, dataset, split,
                  weighted=False):
-        self.model = MS_TCN2(num_layers_PG, num_layers_R, num_R, num_f_maps, dim, num_classes)
+        self.model = MS_TCN2(num_layers_PG, num_layers_R, num_R, num_f_maps, dim, num_classes, weighted)
         self.ce = nn.CrossEntropyLoss(ignore_index=-100)
         self.mse = nn.MSELoss(reduction='none')
         self.num_classes = num_classes
@@ -142,12 +149,20 @@ class Trainer:
         self.model.to(device)
         optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
         best_acc = 0
+        best_epoch = 0
         for epoch in range(num_epochs):
+            if self.weighted:
+                for i, w in enumerate(self.model.Ws):
+                    clogger.report_scalar("Weights", f"Stage {i + 1}", iteration=epoch + 1,
+                                          value=w[0].item())
             epoch_loss_train = 0
             correct_train = 0
             total_train = 0
+            f1s_train = [0, 0, 0]
+            overlap = [.1, .25, .5]
             self.model.train()
             while batch_gen_train.has_next():
+                ####################### Training #######################
                 batch_input, batch_target, mask = batch_gen_train.next_batch(batch_size)
                 batch_input, batch_target, mask = batch_input.to(device), batch_target.to(device), mask.to(device)
                 optimizer.zero_grad()
@@ -155,20 +170,25 @@ class Trainer:
 
                 loss = 0
                 for i, p in enumerate(predictions):
-                    if self.weighted:
-                        temp = self.ce(p.transpose(2, 1).contiguous().view(-1, self.num_classes),
-                                       batch_target.view(-1))
-                        temp += 0.15 * torch.mean(torch.clamp(
-                            self.mse(F.log_softmax(p[:, :, 1:], dim=1), F.log_softmax(p.detach()[:, :, :-1], dim=1)),
-                            min=0, max=16) * mask[:, :, 1:])
-                        loss += (self.weighted * temp) / ((i + 1) ** 0.5)
-
-                    else:
-                        loss += self.ce(p.transpose(2, 1).contiguous().view(-1, self.num_classes),
-                                        batch_target.view(-1))
-                        loss += 0.15 * torch.mean(torch.clamp(
-                            self.mse(F.log_softmax(p[:, :, 1:], dim=1), F.log_softmax(p.detach()[:, :, :-1], dim=1)),
-                            min=0, max=16) * mask[:, :, 1:])
+                    # if self.weighted:
+                    #     temp = self.ce(p.transpose(2, 1).contiguous().view(-1, self.num_classes),
+                    #                    batch_target.view(-1))
+                    #     temp += 0.15 * torch.mean(torch.clamp(
+                    #         self.mse(F.log_softmax(p[:, :, 1:], dim=1), F.log_softmax(p.detach()[:, :, :-1], dim=1)),
+                    #         min=0, max=16) * mask[:, :, 1:])
+                    #     loss += (self.weighted * temp) / ((i + 1) ** 0.5)
+                    #
+                    # else:
+                    #     loss += self.ce(p.transpose(2, 1).contiguous().view(-1, self.num_classes),
+                    #                     batch_target.view(-1))
+                    #     loss += 0.15 * torch.mean(torch.clamp(
+                    #         self.mse(F.log_softmax(p[:, :, 1:], dim=1), F.log_softmax(p.detach()[:, :, :-1], dim=1)),
+                    #         min=0, max=16) * mask[:, :, 1:])
+                    loss += self.ce(p.transpose(2, 1).contiguous().view(-1, self.num_classes),
+                                    batch_target.view(-1))
+                    loss += 0.15 * torch.mean(torch.clamp(
+                        self.mse(F.log_softmax(p[:, :, 1:], dim=1), F.log_softmax(p.detach()[:, :, :-1], dim=1)),
+                        min=0, max=16) * mask[:, :, 1:])
 
                 epoch_loss_train += loss.item()
                 loss.backward()
@@ -177,9 +197,26 @@ class Trainer:
                 _, predicted = torch.max(predictions[-1].data, 1)
                 correct_train += ((predicted == batch_target).float() * mask[:, 0, :].squeeze(1)).sum().item()
                 total_train += torch.sum(mask[:, 0, :]).item()
+                tp, fp, fn = np.zeros(3), np.zeros(3), np.zeros(3)
+
+                for s in range(len(overlap)):
+                    tp1, fp1, fn1 = f_score(predicted.squeeze(0).tolist(), batch_target.squeeze(0).tolist(), overlap[s],
+                                            train=True)
+                    tp[s] += tp1
+                    fp[s] += fp1
+                    fn[s] += fn1
+                for s in range(len(overlap)):
+                    precision = tp[s] / float(tp[s] + fp[s])
+                    recall = tp[s] / float(tp[s] + fn[s])
+                    f1 = 2.0 * (precision * recall) / (precision + recall)
+                    f1 = np.nan_to_num(f1) * 100
+                    f1s_train[s] += f1
+
+            ####################### Validation #######################
             epoch_loss_val = 0
             correct_val = 0
             total_val = 0
+            f1s_val = [0, 0, 0]
             self.model.eval()
             while batch_gen_val.has_next():
                 batch_input, batch_target, mask = batch_gen_val.next_batch(batch_size)
@@ -196,11 +233,25 @@ class Trainer:
                 _, predicted = torch.max(predictions[-1].data, 1)
                 correct_val += ((predicted == batch_target).float() * mask[:, 0, :].squeeze(1)).sum().item()
                 total_val += torch.sum(mask[:, 0, :]).item()
+                tp, fp, fn = np.zeros(3), np.zeros(3), np.zeros(3)
+                for s in range(len(overlap)):
+                    tp1, fp1, fn1 = f_score(predicted.squeeze(0).tolist(), batch_target.squeeze(0).tolist(), overlap[s],
+                                            train=True)
+                    tp[s] += tp1
+                    fp[s] += fp1
+                    fn[s] += fn1
+                for s in range(len(overlap)):
+                    precision = tp[s] / float(tp[s] + fp[s])
+                    recall = tp[s] / float(tp[s] + fn[s])
+                    f1 = 2.0 * (precision * recall) / (precision + recall)
+                    f1 = np.nan_to_num(f1) * 100
+                    f1s_val[s] += f1
 
             batch_gen_train.reset()
             batch_gen_val.reset()
             if float(correct_val) / total_val > best_acc:
                 best_acc = float(correct_val) / total_val
+                best_epoch = epoch
                 torch.save(self.model.state_dict(), save_dir + "/best" + self.fold + "_" + self.weighted_str + ".model")
                 torch.save(optimizer.state_dict(), save_dir + "/best" + self.fold + "_" + self.weighted_str + ".opt")
             logger.info(
@@ -211,13 +262,25 @@ class Trainer:
                 "[epoch %d]: epoch loss validation set = %f,   acc_val = %f" % (
                     epoch + 1, epoch_loss_val / len(batch_gen_val.list_of_examples),
                     float(correct_val) / total_val))
-            clogger.report_scalar("Losses", "Train Loss", iteration=epoch, value=epoch_loss_train)
-            clogger.report_scalar("Losses", "Validation Loss", iteration=epoch, value=epoch_loss_val)
-            clogger.report_scalar("Accuracies", "Train Accuracy", iteration=epoch,
+            clogger.report_scalar(self.weighted_str + " Losses - " + self.fold, "Train Loss", iteration=epoch + 1,
+                                  value=epoch_loss_train / len(batch_gen_train.list_of_examples))
+            clogger.report_scalar(self.weighted_str + " Losses - " + self.fold, "Validation Loss", iteration=epoch + 1,
+                                  value=epoch_loss_val / len(batch_gen_val.list_of_examples))
+            clogger.report_scalar(self.weighted_str + " Accuracies - " + self.fold, "Train Accuracy",
+                                  iteration=epoch + 1,
                                   value=(float(correct_train) / total_train))
-            clogger.report_scalar("Accuracies", "Validation Accuracy", iteration=epoch,
+            clogger.report_scalar(self.weighted_str + " Accuracies - " + self.fold, "Validation Accuracy",
+                                  iteration=epoch + 1,
                                   value=(float(correct_val) / total_val))
-        logger.info(f"{self.weighted_str} Run: Best Validation accuracy = %f" % best_acc)
+            for k in range(len(overlap)):
+                clogger.report_scalar(self.weighted_str + " F1 Validation - " + self.fold,
+                                      f"F1@{int(overlap[k] * 100)}",
+                                      iteration=epoch + 1,
+                                      value=(float(f1s_val[k]) / len(batch_gen_val.list_of_examples)))
+                clogger.report_scalar(self.weighted_str + " F1 Train - " + self.fold, f"F1@{int(overlap[k] * 100)}",
+                                      iteration=epoch + 1,
+                                      value=(float(f1s_train[k]) / len(batch_gen_train.list_of_examples)))
+        logger.info(f"{self.weighted_str} Run: Best Validation accuracy = %f at epoch = %f" % (best_acc, best_epoch))
 
     def predict(self, model_dir, results_dir, features_path, vid_list_file, epoch, actions_dict, device, sample_rate):
         self.model.eval()

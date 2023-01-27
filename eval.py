@@ -33,6 +33,18 @@ def get_labels_start_end_time(frame_wise_labels, bg_class=["background"]):
     return labels, starts, ends
 
 
+def custom_get_labels_start_end_time(frame_wise_labels, bg_class=["background"]):
+    labels = []
+    starts = []
+    ends = []
+    for gt in frame_wise_labels:
+        gt_split = gt.split()
+        labels.append(gt_split[-1])
+        starts.append(int(gt_split[0]))
+        ends.append(int(gt_split[1]) + 1)
+    return labels, starts, ends
+
+
 def levenstein(p, y, norm=False):
     m_row = len(p)
     n_col = len(y)
@@ -65,9 +77,12 @@ def edit_score(recognized, ground_truth, norm=True, bg_class=["background"]):
     return levenstein(P, Y, norm)
 
 
-def f_score(recognized, ground_truth, overlap, bg_class=["background"]):
+def f_score(recognized, ground_truth, overlap, train=False, bg_class=["background"]):
     p_label, p_start, p_end = get_labels_start_end_time(recognized, bg_class)
-    y_label, y_start, y_end = get_labels_start_end_time(ground_truth, bg_class)
+    if train:
+        y_label, y_start, y_end = get_labels_start_end_time(ground_truth, bg_class)
+    else:
+        y_label, y_start, y_end = custom_get_labels_start_end_time(ground_truth, bg_class)
 
     tp = 0
     fp = 0
@@ -98,11 +113,12 @@ def main():
 
     args = parser.parse_args()
 
-    ground_truth_path = "./data/" + args.dataset + "/groundTruth/"
-    recog_path = "./results/" + args.dataset + "/split_" + args.split + "/"
-    file_list = "./data/" + args.dataset + "/splits/test.split" + args.split + ".bundle"
+    ground_truth_path = '/datashare/APAS/transcriptions_gestures/'
+    recog_path = "./results/test/"
+    # file_list = "./data/" + args.dataset + "/splits/test.split" + args.split + ".bundle"
+    list_of_videos = ['P016_balloon1']
 
-    list_of_videos = read_file(file_list).split('\n')[:-1]
+    # list_of_videos = read_file(file_list).split('\n')[:-1]
 
     overlap = [.1, .25, .5]
     tp, fp, fn = np.zeros(3), np.zeros(3), np.zeros(3)
@@ -113,17 +129,17 @@ def main():
 
     for vid in list_of_videos:
         gt_file = ground_truth_path + vid
-        gt_content = read_file(gt_file).split('\n')[0:-1]
+        gt_content = read_file(gt_file + ".txt").split('\n')[0:-1]
 
         recog_file = recog_path + vid.split('.')[0]
         recog_content = read_file(recog_file).split('\n')[1].split()
 
-        for i in range(len(gt_content)):
-            total += 1
-            if gt_content[i] == recog_content[i]:
-                correct += 1
-
-        edit += edit_score(recog_content, gt_content)
+        # for i in range(len(gt_content)):
+        #     total += 1
+        #     if gt_content[i] == recog_content[i]:
+        #         correct += 1
+        #
+        # edit += edit_score(recog_content, gt_content)
 
         for s in range(len(overlap)):
             tp1, fp1, fn1 = f_score(recog_content, gt_content, overlap[s])

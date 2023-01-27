@@ -72,14 +72,20 @@ fold_files = [(f"/datashare/APAS/folds/valid {i}.txt",
 gt_path = '/datashare/APAS/transcriptions_gestures/'
 mapping_file = "/datashare/APAS/mapping_gestures.txt"
 model_dir = "./models/test"
-results_dir = "./results/test"
+try:
+    latest = max([int(exp.split("exp")[-1]) for exp in os.listdir("./results")])
+except Exception:
+    latest = 0
+new_exp = f"exp{latest + 1}"
+
+results_dir = "./results/" + str(new_exp) + "/{}/{}/test"
 
 features_path = "/datashare/APAS/features/"
 
 if not os.path.exists(model_dir):
     os.makedirs(model_dir)
-if not os.path.exists(results_dir):
-    os.makedirs(results_dir)
+# if not os.path.exists(results_dir):
+#     os.makedirs(results_dir)
 
 file_ptr = open(mapping_file, 'r')
 actions = file_ptr.read().split('\n')[:-1]
@@ -95,32 +101,28 @@ clogger = task.get_logger()
 
 print("Starting training!")
 if args.action == "train":
-    for val_path_fold, test_path_fold, features_path_fold in fold_files:
-        fold_num = features_path_fold.split("/")[-2]
-        print(f"\t{fold_num}")
-        vid_list_file, vid_list_file_val, vid_list_file_test = fold_split(features_path_fold, val_path_fold,
-                                                                          test_path_fold)
-        batch_gen_train = BatchGenerator(num_classes, actions_dict, gt_path, features_path_fold, sample_rate)
+    for weighted_flag in [True, False]:
+        for val_path_fold, test_path_fold, features_path_fold in fold_files:
+            fold_num = features_path_fold.split("/")[-2]
+            print(f"\t{fold_num}")
+            fold_results_dir_reg = results_dir.format(fold_num, "Regular")
+            fold_results_dir_Weighted = results_dir.format(fold_num, "Weighted")
+            vid_list_file, vid_list_file_val, vid_list_file_test = fold_split(features_path_fold, val_path_fold,
+                                                                              test_path_fold)
+            batch_gen_train = BatchGenerator(num_classes, actions_dict, gt_path, features_path_fold, sample_rate)
 
-        batch_gen_train.read_data(vid_list_file)
-        batch_gen_val = BatchGenerator(num_classes, actions_dict, gt_path, features_path_fold, sample_rate)
+            batch_gen_train.read_data(vid_list_file)
+            batch_gen_val = BatchGenerator(num_classes, actions_dict, gt_path, features_path_fold, sample_rate)
 
-        batch_gen_val.read_data(vid_list_file_val)
-        # Regular
-        trainer = Trainer(num_layers_PG, num_layers_R, num_R, num_f_maps, features_dim, num_classes, fold_num, fold_num)
-        trainer.train(model_dir, batch_gen_train, batch_gen_val, num_epochs=num_epochs, batch_size=bz, learning_rate=lr,
-                      device=device, clogger=clogger)
-        trainer.predict(model_dir, results_dir, features_path_fold, vid_list_file_test, num_epochs, actions_dict,
-                        device, sample_rate)
-        # Weighted
-        trainer = Trainer(num_layers_PG, num_layers_R, num_R, num_f_maps, features_dim, num_classes, fold_num, fold_num,
-                          weighted=1)
-        trainer.train(model_dir, batch_gen_train, batch_gen_val, num_epochs=num_epochs, batch_size=bz, learning_rate=lr,
-                      device=device, clogger=clogger)
-        trainer.predict(model_dir, results_dir, features_path_fold, vid_list_file_test, num_epochs, actions_dict,
-                        device,
-                        sample_rate)
-
-# if args.action == "predict":
-#     trainer.predict(model_dir, results_dir, features_path, vid_list_file_tst, num_epochs, actions_dict, device,
-#                     sample_rate)
+            batch_gen_val.read_data(vid_list_file_val)
+            # Regular
+            trainer = Trainer(num_layers_PG, num_layers_R, num_R, num_f_maps, features_dim, num_classes, fold_num,
+                              fold_num, weighted=weighted_flag)
+            trainer.train(model_dir, batch_gen_train, batch_gen_val, num_epochs=num_epochs, batch_size=bz,
+                          learning_rate=lr, device=device, clogger=clogger)
+            try:
+                os.makedirs(fold_results_dir_Weighted if weighted_flag else fold_results_dir_reg)
+            except:
+                pass
+            trainer.predict(model_dir, fold_results_dir_Weighted if weighted_flag else fold_results_dir_reg,
+                            features_path_fold, vid_list_file_test, num_epochs, actions_dict, device, sample_rate)
