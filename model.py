@@ -20,7 +20,7 @@ class MS_TCN2(nn.Module):
         #   Added by us
         self.weighted = weighted
         self.Ws = nn.ParameterList(
-            [copy.deepcopy(nn.Parameter(data=torch.rand(1), requires_grad=True)) for s in range(num_R)])
+            [copy.deepcopy(nn.Parameter(data=(torch.rand(1)), requires_grad=True)) for s in range(num_R)])
 
     def forward(self, x):
         out = self.PG(x)
@@ -132,14 +132,22 @@ class DilatedResidualLayer(nn.Module):
 
 class Trainer:
     def __init__(self, num_layers_PG, num_layers_R, num_R, num_f_maps, dim, num_classes, dataset, split,
-                 weighted=False):
+                 weighted=False, kl=False, class_weights=None):
         self.model = MS_TCN2(num_layers_PG, num_layers_R, num_R, num_f_maps, dim, num_classes, weighted)
-        self.ce = nn.CrossEntropyLoss(ignore_index=-100)
+        if class_weights is not None:
+            self.ce = nn.CrossEntropyLoss(weight=class_weights, ignore_index=-100)
+        else:
+            self.ce = nn.CrossEntropyLoss(ignore_index=-100)
         self.mse = nn.MSELoss(reduction='none')
         self.num_classes = num_classes
         self.fold = split
         self.weighted = weighted
         self.weighted_str = "Weighted" if self.weighted else "Regular"
+        self.kl = kl
+        self.kl_str = "KL" if self.kl else "No-KL"
+        self.class_weights = class_weights is not None
+        self.class_weights_str = "ClassWeighting" if self.class_weights else "NoClassWeighting"
+        self.exp_name = "-".join([self.weighted_str, self.kl_str, self.class_weights_str])
 
         logger.add('logs/' + dataset + "_" + split + "_{time}.log")
         logger.add(sys.stdout, colorize=True, format="{message}")
@@ -186,9 +194,12 @@ class Trainer:
                     #         min=0, max=16) * mask[:, :, 1:])
                     loss += self.ce(p.transpose(2, 1).contiguous().view(-1, self.num_classes),
                                     batch_target.view(-1))
-                    loss += 0.15 * torch.mean(torch.clamp(
+                    loss += 0.5 * torch.mean(torch.clamp(
                         self.mse(F.log_softmax(p[:, :, 1:], dim=1), F.log_softmax(p.detach()[:, :, :-1], dim=1)),
                         min=0, max=16) * mask[:, :, 1:])
+                    if self.kl:
+                        loss += 0.5 * torch.mean(F.softmax(p[:, :, 1:], dim=1) * (
+                                F.log_softmax(p[:, :, 1:], dim=1) - F.log_softmax(p.detach()[:, :, :-1], dim=1)))
 
                 epoch_loss_train += loss.item()
                 loss.backward()
@@ -200,7 +211,7 @@ class Trainer:
                 tp, fp, fn = np.zeros(3), np.zeros(3), np.zeros(3)
 
                 for s in range(len(overlap)):
-                    tp1, fp1, fn1 = f_score(predicted.squeeze(0).tolist(), batch_target.squeeze(0).tolist(), overlap[s],
+                    tp1, fp1, fn1 = f_score(predicted.view(-1).tolist(), batch_target.view(-1).tolist(), overlap[s],
                                             train=True)
                     tp[s] += tp1
                     fp[s] += fp1
@@ -235,7 +246,7 @@ class Trainer:
                 total_val += torch.sum(mask[:, 0, :]).item()
                 tp, fp, fn = np.zeros(3), np.zeros(3), np.zeros(3)
                 for s in range(len(overlap)):
-                    tp1, fp1, fn1 = f_score(predicted.squeeze(0).tolist(), batch_target.squeeze(0).tolist(), overlap[s],
+                    tp1, fp1, fn1 = f_score(predicted.view(-1).tolist(), batch_target.view(-1).tolist(), overlap[s],
                                             train=True)
                     tp[s] += tp1
                     fp[s] += fp1
@@ -262,25 +273,25 @@ class Trainer:
                 "[epoch %d]: epoch loss validation set = %f,   acc_val = %f" % (
                     epoch + 1, epoch_loss_val / len(batch_gen_val.list_of_examples),
                     float(correct_val) / total_val))
-            clogger.report_scalar(self.weighted_str + " Losses - " + self.fold, "Train Loss", iteration=epoch + 1,
+            clogger.report_scalar(self.exp_name + " Losses - " + self.fold, "Train Loss", iteration=epoch + 1,
                                   value=epoch_loss_train / len(batch_gen_train.list_of_examples))
-            clogger.report_scalar(self.weighted_str + " Losses - " + self.fold, "Validation Loss", iteration=epoch + 1,
+            clogger.report_scalar(self.exp_name + " Losses - " + self.fold, "Validation Loss", iteration=epoch + 1,
                                   value=epoch_loss_val / len(batch_gen_val.list_of_examples))
-            clogger.report_scalar(self.weighted_str + " Accuracies - " + self.fold, "Train Accuracy",
+            clogger.report_scalar(self.exp_name + " Accuracies - " + self.fold, "Train Accuracy",
                                   iteration=epoch + 1,
                                   value=(float(correct_train) / total_train))
-            clogger.report_scalar(self.weighted_str + " Accuracies - " + self.fold, "Validation Accuracy",
+            clogger.report_scalar(self.exp_name + " Accuracies - " + self.fold, "Validation Accuracy",
                                   iteration=epoch + 1,
                                   value=(float(correct_val) / total_val))
             for k in range(len(overlap)):
-                clogger.report_scalar(self.weighted_str + " F1 Validation - " + self.fold,
+                clogger.report_scalar(self.exp_name + " F1 Validation - " + self.fold,
                                       f"F1@{int(overlap[k] * 100)}",
                                       iteration=epoch + 1,
                                       value=(float(f1s_val[k]) / len(batch_gen_val.list_of_examples)))
-                clogger.report_scalar(self.weighted_str + " F1 Train - " + self.fold, f"F1@{int(overlap[k] * 100)}",
+                clogger.report_scalar(self.exp_name + " F1 Train - " + self.fold, f"F1@{int(overlap[k] * 100)}",
                                       iteration=epoch + 1,
                                       value=(float(f1s_train[k]) / len(batch_gen_train.list_of_examples)))
-        logger.info(f"{self.weighted_str} Run: Best Validation accuracy = %f at epoch = %f" % (best_acc, best_epoch))
+        logger.info(f"{self.exp_name} Run: Best Validation accuracy = %f at epoch = %f" % (best_acc, best_epoch))
 
     def predict(self, model_dir, results_dir, features_path, vid_list_file, epoch, actions_dict, device, sample_rate):
         self.model.eval()
