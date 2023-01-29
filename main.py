@@ -23,13 +23,13 @@ parser.add_argument('--dataset', default="gtea")
 parser.add_argument('--split', default='1')
 
 parser.add_argument('--features_dim', default='1280', type=int)
-parser.add_argument('--bz', default='5', type=int)
-parser.add_argument('--lr', default='0.0025', type=float)
+parser.add_argument('--bz', default='1', type=int)
+parser.add_argument('--lr', default='0.0005', type=float)
 
 parser.add_argument('--num_f_maps', default='65', type=int)
 
 # Need input
-parser.add_argument('--num_epochs', default=30, type=int)
+parser.add_argument('--num_epochs', default=40, type=int)
 parser.add_argument('--num_layers_PG', default=10, type=int)
 parser.add_argument('--num_layers_R', default=10, type=int)
 parser.add_argument('--num_R', default=3, type=int)
@@ -122,35 +122,36 @@ clogger = task.get_logger()
 
 print("Starting training!")
 if args.action == "train":
-    for kl_flag in [False, True]:
-        for label_class_weights in [True, False]:
-            for weighted_flag in [True, False]:
-                for val_path_fold, test_path_fold, features_path_fold in fold_files:
-                    fold_num = features_path_fold.split("/")[-2]
-                    print(f"\t{fold_num}")
-                    folder_weight_flag = "Weighted" if weighted_flag else "Regular"
-                    folder_kl_flag = "KL" if kl_flag else "No_KL"
-                    folder_class_labels_flag = "ClassWeighted" if kl_flag else "NotClassWeighted"
-                    folder_name = results_dir.format(fold_num,
-                                                     folder_weight_flag + "_" + folder_kl_flag + "_" + folder_class_labels_flag)
-                    vid_list_file, vid_list_file_val, vid_list_file_test = fold_split(features_path_fold, val_path_fold,
-                                                                                      test_path_fold)
-                    batch_gen_train = BatchGenerator(num_classes, actions_dict, gt_path, features_path_fold,
-                                                     sample_rate)
+    for label_class_weights in [True, False]:
+        for gru_flag in [True, False]:
+            for val_path_fold, test_path_fold, features_path_fold in fold_files:
+                kl_flag = False
+                weighted_flag = False
+                fold_num = features_path_fold.split("/")[-2]
+                print(f"\t{fold_num}")
+                folder_weight_flag = "Weighted" if weighted_flag else "Regular"
+                folder_kl_flag = "KL" if kl_flag else "No_KL"
+                folder_class_labels_flag = "ClassWeighted" if kl_flag else "NotClassWeighted"
+                folder_name = results_dir.format(fold_num,
+                                                 folder_weight_flag + "_" + folder_kl_flag + "_" + folder_class_labels_flag)
+                vid_list_file, vid_list_file_val, vid_list_file_test = fold_split(features_path_fold, val_path_fold,
+                                                                                  test_path_fold)
+                batch_gen_train = BatchGenerator(num_classes, actions_dict, gt_path, features_path_fold,
+                                                 sample_rate)
 
-                    batch_gen_train.read_data(vid_list_file)
-                    batch_gen_val = BatchGenerator(num_classes, actions_dict, gt_path, features_path_fold, sample_rate)
+                batch_gen_train.read_data(vid_list_file)
+                batch_gen_val = BatchGenerator(num_classes, actions_dict, gt_path, features_path_fold, sample_rate)
 
-                    batch_gen_val.read_data(vid_list_file_val)
-                    trainer = Trainer(num_layers_PG, num_layers_R, num_R, num_f_maps, features_dim, num_classes,
-                                      fold_num, fold_num, weighted=weighted_flag, kl=kl_flag,
-                                      class_weights=class_weights if label_class_weights else None)
-                    trainer.train(model_dir, batch_gen_train, batch_gen_val, num_epochs=num_epochs, batch_size=bz,
-                                  learning_rate=lr, device=device, clogger=clogger)
-                    try:
-                        os.makedirs(folder_name)
-                    except:
-                        pass
-                    trainer.predict(model_dir, folder_name,
-                                    features_path_fold, vid_list_file_test, num_epochs, actions_dict, device,
-                                    sample_rate)
+                batch_gen_val.read_data(vid_list_file_val)
+                trainer = Trainer(num_layers_PG, num_layers_R, num_R, num_f_maps, features_dim, num_classes,
+                                  fold_num, fold_num, weighted=weighted_flag, kl=kl_flag, gru=gru_flag,
+                                  class_weights=class_weights if label_class_weights else None)
+                trainer.train(model_dir, batch_gen_train, batch_gen_val, num_epochs=num_epochs, batch_size=bz,
+                              learning_rate=lr, device=device, clogger=clogger)
+                try:
+                    os.makedirs(folder_name)
+                except:
+                    pass
+                trainer.predict(model_dir, folder_name,
+                                features_path_fold, vid_list_file_test, num_epochs, actions_dict, device,
+                                sample_rate)

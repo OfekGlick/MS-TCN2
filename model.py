@@ -9,25 +9,27 @@ import copy
 import numpy as np
 from loguru import logger
 from eval import f_score
-
+from tqdm import tqdm
 
 class MS_TCN2(nn.Module):
-    def __init__(self, num_layers_PG, num_layers_R, num_R, num_f_maps, dim, num_classes, weighted=False):
+    def __init__(self, num_layers_PG, num_layers_R, num_R, num_f_maps, dim, num_classes, weighted=False, gru=False):
         super(MS_TCN2, self).__init__()
         self.PG = Prediction_Generation(num_layers_PG, num_f_maps, dim, num_classes)
         self.Rs = nn.ModuleList(
             [copy.deepcopy(Refinement(num_layers_R, num_f_maps, num_classes, num_classes)) for s in range(num_R)])
         #   Added by us
         self.weighted = weighted
-        self.Ws = nn.ParameterList(
-            [copy.deepcopy(nn.Parameter(data=(torch.rand(1)), requires_grad=True)) for s in range(num_R)])
+        self.gru = nn.GRU(input_size=6, batch_first=True, hidden_size=64, num_layers=3, dropout=0.2, bidirectional=True)
+        self.hidden_to_label = nn.Linear(in_features=128, out_features=6)
+        self.gru_flag = gru
 
     def forward(self, x):
         out = self.PG(x)
         outputs = out.unsqueeze(0)
-        for R, W in zip(self.Rs, self.Ws):
-            if self.weighted:
-                out = W * R(F.softmax(out, dim=1))
+        for i, R in enumerate(self.Rs):
+            if self.gru_flag and i == 1:
+                out = self.gru(F.softmax(out, dim=1).transpose(2, 1))[0].squeeze(0)
+                out = self.hidden_to_label(out).unsqueeze(0).transpose(1, 2)
             else:
                 out = R(F.softmax(out, dim=1))
             outputs = torch.cat((outputs, out.unsqueeze(0)), dim=0)
@@ -132,8 +134,8 @@ class DilatedResidualLayer(nn.Module):
 
 class Trainer:
     def __init__(self, num_layers_PG, num_layers_R, num_R, num_f_maps, dim, num_classes, dataset, split,
-                 weighted=False, kl=False, class_weights=None):
-        self.model = MS_TCN2(num_layers_PG, num_layers_R, num_R, num_f_maps, dim, num_classes, weighted)
+                 weighted=False, kl=False, class_weights=None, gru=False):
+        self.model = MS_TCN2(num_layers_PG, num_layers_R, num_R, num_f_maps, dim, num_classes, weighted, gru)
         if class_weights is not None:
             self.ce = nn.CrossEntropyLoss(weight=class_weights, ignore_index=-100)
         else:
@@ -147,7 +149,9 @@ class Trainer:
         self.kl_str = "KL" if self.kl else "No-KL"
         self.class_weights = class_weights is not None
         self.class_weights_str = "ClassWeighting" if self.class_weights else "NoClassWeighting"
-        self.exp_name = "-".join([self.weighted_str, self.kl_str, self.class_weights_str])
+        self.gru = gru
+        self.gru_str = "GRU" if self.gru else "No-GRU"
+        self.exp_name = "-".join([self.weighted_str, self.kl_str, self.class_weights_str, self.gru_str])
 
         logger.add('logs/' + dataset + "_" + split + "_{time}.log")
         logger.add(sys.stdout, colorize=True, format="{message}")
@@ -158,10 +162,11 @@ class Trainer:
         optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
         best_acc = 0
         best_epoch = 0
-        for epoch in range(num_epochs):
+        for epoch in tqdm(range(num_epochs)):
             if self.weighted:
                 for i, w in enumerate(self.model.Ws):
-                    clogger.report_scalar("Weights", f"Stage {i + 1}", iteration=epoch + 1,
+                    clogger.report_scalar(self.exp_name + "-" + self.fold + " Weights", f"Stage {i + 1}",
+                                          iteration=epoch + 1,
                                           value=w[0].item())
             epoch_loss_train = 0
             correct_train = 0
@@ -169,8 +174,11 @@ class Trainer:
             f1s_train = [0, 0, 0]
             overlap = [.1, .25, .5]
             self.model.train()
+            batch_i = 0
+            batch_loss = 0
             while batch_gen_train.has_next():
                 ####################### Training #######################
+                batch_i += 1
                 batch_input, batch_target, mask = batch_gen_train.next_batch(batch_size)
                 batch_input, batch_target, mask = batch_input.to(device), batch_target.to(device), mask.to(device)
                 optimizer.zero_grad()
@@ -202,8 +210,12 @@ class Trainer:
                                 F.log_softmax(p[:, :, 1:], dim=1) - F.log_softmax(p.detach()[:, :, :-1], dim=1)))
 
                 epoch_loss_train += loss.item()
-                loss.backward()
-                optimizer.step()
+                if batch_i % 5 == 0:
+                    batch_loss.backward()
+                    optimizer.step()
+                    batch_loss = 0
+                else:
+                    batch_loss += loss / 5
 
                 _, predicted = torch.max(predictions[-1].data, 1)
                 correct_train += ((predicted == batch_target).float() * mask[:, 0, :].squeeze(1)).sum().item()
