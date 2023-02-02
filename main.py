@@ -72,14 +72,14 @@ fold_files = [(f"/datashare/APAS/folds/valid {i}.txt",
 
 gt_path = '/datashare/APAS/transcriptions_gestures/'
 mapping_file = "/datashare/APAS/mapping_gestures.txt"
-model_dir = "./models/test"
 try:
     latest = max([int(exp.split("exp")[-1]) for exp in os.listdir("./results")])
 except Exception:
     latest = 0
 new_exp = f"exp{latest + 1}"
 print(f"Experiment: {new_exp}")
-results_dir = "./results/" + str(new_exp) + "/{}/{}/test"
+results_dir = "./results/" + str(new_exp) + "/{}/{}"
+model_dir = "./models/" + str(new_exp) + "/{}/{}"
 
 features_path = "/datashare/APAS/features/"
 
@@ -99,12 +99,12 @@ def calc_class_weights(labels_path):
     class_counts = {k: v / sample_count for k, v in class_counts.items()}
     median_freq = np.median(list(class_counts.values()))
     class_weights = sorted([(k, median_freq / v) for k, v in class_counts.items()], key=lambda x: x[0])
-    return torch.tensor([weight for _, weight in class_weights])
+    return torch.tensor([weight for _, weight in class_weights]).float().to(device)
 
 
-class_weights = calc_class_weights(gt_path).float().to(device)
-if not os.path.exists(model_dir):
-    os.makedirs(model_dir)
+class_weights = calc_class_weights(gt_path)
+# if not os.path.exists(model_dir):
+#     os.makedirs(model_dir)
 # if not os.path.exists(results_dir):
 #     os.makedirs(results_dir)
 
@@ -120,38 +120,48 @@ num_classes = len(actions_dict)
 task = Task.init(project_name='CVSA - Final project', task_name='Weighted MS-TCN++')
 clogger = task.get_logger()
 
+configurations = [(True, False, False, True), (False, False, False, True)]
+
 print("Starting training!")
+lior_flag = 0
 if args.action == "train":
-    for label_class_weights in [True, False]:
-        for gru_flag in [True, False]:
-            for val_path_fold, test_path_fold, features_path_fold in fold_files:
-                kl_flag = False
-                weighted_flag = False
-                fold_num = features_path_fold.split("/")[-2]
-                print(f"\t{fold_num}")
-                folder_weight_flag = "Weighted" if weighted_flag else "Regular"
-                folder_kl_flag = "KL" if kl_flag else "No_KL"
-                folder_class_labels_flag = "ClassWeighted" if kl_flag else "NotClassWeighted"
-                folder_name = results_dir.format(fold_num,
-                                                 folder_weight_flag + "_" + folder_kl_flag + "_" + folder_class_labels_flag)
-                vid_list_file, vid_list_file_val, vid_list_file_test = fold_split(features_path_fold, val_path_fold,
-                                                                                  test_path_fold)
-                batch_gen_train = BatchGenerator(num_classes, actions_dict, gt_path, features_path_fold,
-                                                 sample_rate)
+    for label_class_weights, gru_flag, weighted_flag, final_gru in configurations:
+        for val_path_fold, test_path_fold, features_path_fold in fold_files:
+            kl_flag = False
+            lior_flag += 1
+            fold_num = features_path_fold.split("/")[-2]
+            print(f"\t{fold_num}")
+            folder_weight_flag = "Weighted" if weighted_flag else "Regular"
+            folder_kl_flag = "KL" if kl_flag else "No_KL"
+            folder_class_labels_flag = "ClassWeighted" if label_class_weights else "NotClassWeighted"
+            middle_GRU_flag = "Middle-GRU" if gru_flag else "Middle-NoGRU"
+            final_GRU_flag = "Final-GRU" if final_gru else "Final-NoGRU"
+            folder_name = results_dir.format(fold_num,
+                                             folder_weight_flag + "_" + folder_kl_flag + "_" + folder_class_labels_flag + "_" + middle_GRU_flag + "_" + final_GRU_flag)
+            model_folder_name = model_dir.format(fold_num,
+                                                 folder_weight_flag + "_" + folder_kl_flag + "_" + folder_class_labels_flag + "_" + middle_GRU_flag + "_" + final_GRU_flag)
+            try:
+                os.makedirs(folder_name)
+                os.makedirs(model_folder_name)
+            except:
+                pass
+            vid_list_file, vid_list_file_val, vid_list_file_test = fold_split(features_path_fold, val_path_fold,
+                                                                              test_path_fold)
+            batch_gen_train = BatchGenerator(num_classes, actions_dict, gt_path, features_path_fold,
+                                             sample_rate)
 
-                batch_gen_train.read_data(vid_list_file)
-                batch_gen_val = BatchGenerator(num_classes, actions_dict, gt_path, features_path_fold, sample_rate)
+            batch_gen_train.read_data(vid_list_file)
+            batch_gen_val = BatchGenerator(num_classes, actions_dict, gt_path, features_path_fold, sample_rate)
 
-                batch_gen_val.read_data(vid_list_file_val)
-                trainer = Trainer(num_layers_PG, num_layers_R, num_R, num_f_maps, features_dim, num_classes,
-                                  fold_num, fold_num, weighted=weighted_flag, kl=kl_flag, gru=gru_flag,
-                                  class_weights=class_weights if label_class_weights else None)
-                trainer.train(model_dir, batch_gen_train, batch_gen_val, num_epochs=num_epochs, batch_size=bz,
-                              learning_rate=lr, device=device, clogger=clogger)
-                try:
-                    os.makedirs(folder_name)
-                except:
-                    pass
-                trainer.predict(model_dir, folder_name,
-                                features_path_fold, vid_list_file_test, num_epochs, actions_dict, device,
-                                sample_rate)
+            batch_gen_val.read_data(vid_list_file_val)
+            trainer = Trainer(num_layers_PG, num_layers_R, num_R, num_f_maps, features_dim, num_classes,
+                              fold_num, fold_num, weighted=weighted_flag, kl=kl_flag, gru=gru_flag,
+                              class_weights=class_weights if label_class_weights else None, final_gru=final_gru)
+            trainer.train(model_folder_name, batch_gen_train, batch_gen_val, num_epochs=num_epochs, batch_size=bz,
+                          learning_rate=lr, device=device, clogger=clogger)
+
+            trainer.predict(model_folder_name, folder_name,
+                            features_path_fold, vid_list_file_test, num_epochs, actions_dict, device,
+                            sample_rate)
+            if lior_flag == 2:
+                break
