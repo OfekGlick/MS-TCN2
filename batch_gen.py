@@ -20,7 +20,7 @@ class BatchGenerator(object):
         df = pd.read_csv(path, header=None, sep=' ', names=['start', 'end', 'label'])
         ground_truth = np.zeros(df.iloc[-1, 1])  # last row end time, maximum time
         for index, row in df.iterrows():
-            ground_truth[row[0]:row[1]] = self.actions_dict[row[2]]
+            ground_truth[row[0]:row[1] + 1] = self.actions_dict[row[2]]
         return ground_truth
 
     def reset(self):

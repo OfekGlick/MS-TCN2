@@ -29,7 +29,7 @@ parser.add_argument('--lr', default='0.0005', type=float)
 parser.add_argument('--num_f_maps', default='65', type=int)
 
 # Need input
-parser.add_argument('--num_epochs', default=40, type=int)
+parser.add_argument('--num_epochs', default=30, type=int)
 parser.add_argument('--num_layers_PG', default=10, type=int)
 parser.add_argument('--num_layers_R', default=10, type=int)
 parser.add_argument('--num_R', default=3, type=int)
@@ -101,7 +101,6 @@ def calc_class_weights(labels_path):
     class_weights = sorted([(k, median_freq / v) for k, v in class_counts.items()], key=lambda x: x[0])
     return torch.tensor([weight for _, weight in class_weights]).float().to(device)
 
-
 class_weights = calc_class_weights(gt_path)
 # if not os.path.exists(model_dir):
 #     os.makedirs(model_dir)
@@ -117,18 +116,22 @@ for a in actions:
 
 num_classes = len(actions_dict)
 
-task = Task.init(project_name='CVSA - Final project', task_name='Weighted MS-TCN++')
+task = Task.init(project_name='CVSA - Final project', task_name=new_exp+"Baseline & Chosen model")
 clogger = task.get_logger()
+configurations = [(True, False, False, True)]
 
-configurations = [(True, False, False, True), (False, False, False, True)]
+
 
 print("Starting training!")
 lior_flag = 0
-if args.action == "train":
-    for label_class_weights, gru_flag, weighted_flag, final_gru in configurations:
-        for val_path_fold, test_path_fold, features_path_fold in fold_files:
+if args.action == "train_tradeoff":
+    for val_path_fold, test_path_fold, features_path_fold in fold_files:
+        for sample_size in [1, 5, 10, 30, 60]:
             kl_flag = False
-            lior_flag += 1
+            label_class_weights = True
+            gru_flag = False
+            weighted_flag = False
+            final_gru = True
             fold_num = features_path_fold.split("/")[-2]
             print(f"\t{fold_num}")
             folder_weight_flag = "Weighted" if weighted_flag else "Regular"
@@ -136,10 +139,12 @@ if args.action == "train":
             folder_class_labels_flag = "ClassWeighted" if label_class_weights else "NotClassWeighted"
             middle_GRU_flag = "Middle-GRU" if gru_flag else "Middle-NoGRU"
             final_GRU_flag = "Final-GRU" if final_gru else "Final-NoGRU"
-            folder_name = results_dir.format(fold_num,
-                                             folder_weight_flag + "_" + folder_kl_flag + "_" + folder_class_labels_flag + "_" + middle_GRU_flag + "_" + final_GRU_flag)
-            model_folder_name = model_dir.format(fold_num,
-                                                 folder_weight_flag + "_" + folder_kl_flag + "_" + folder_class_labels_flag + "_" + middle_GRU_flag + "_" + final_GRU_flag)
+            sample_size_flag = f"Sample size {sample_size}"
+            ################## Flags to print ######################
+            exts = [final_GRU_flag, folder_class_labels_flag, sample_size_flag]
+            ########################################################
+            folder_name = results_dir.format(fold_num, "_".join(exts))
+            model_folder_name = model_dir.format(fold_num, "_".join(exts))
             try:
                 os.makedirs(folder_name)
                 os.makedirs(model_folder_name)
@@ -156,12 +161,12 @@ if args.action == "train":
             batch_gen_val.read_data(vid_list_file_val)
             trainer = Trainer(num_layers_PG, num_layers_R, num_R, num_f_maps, features_dim, num_classes,
                               fold_num, fold_num, weighted=weighted_flag, kl=kl_flag, gru=gru_flag,
-                              class_weights=class_weights if label_class_weights else None, final_gru=final_gru)
+                              class_weights=class_weights if label_class_weights else None, final_gru=final_gru,
+                              sample_size=sample_size)
             trainer.train(model_folder_name, batch_gen_train, batch_gen_val, num_epochs=num_epochs, batch_size=bz,
                           learning_rate=lr, device=device, clogger=clogger)
 
             trainer.predict(model_folder_name, folder_name,
                             features_path_fold, vid_list_file_test, num_epochs, actions_dict, device,
                             sample_rate)
-            if lior_flag == 2:
-                break
+

@@ -8,19 +8,20 @@ from torch import optim
 import copy
 import numpy as np
 from loguru import logger
-from eval import f_score
+from eval import f_score, edit_score
 from tqdm import tqdm
 
 
 class MS_TCN2_GRU(nn.Module):
-    def __init__(self, num_layers_PG, num_layers_R, num_R, num_f_maps, dim, num_classes):
+    def __init__(self, num_layers_PG, num_layers_R, num_R, num_f_maps, dim, num_classes, sample_size=5):
         super(MS_TCN2_GRU, self).__init__()
         self.PG = Prediction_Generation(num_layers_PG, num_f_maps, dim, num_classes)
         self.Rs = nn.ModuleList(
             [copy.deepcopy(Refinement(num_layers_R, num_f_maps, num_classes, num_classes)) for s in range(num_R)])
         #   Added by us
-        self.gru = nn.GRU(input_size=6, batch_first=True, hidden_size=64, num_layers=3, dropout=0.2, bidirectional=True)
+        self.gru = nn.GRU(input_size=6, batch_first=True, hidden_size=64, num_layers=3, dropout=0.1, bidirectional=True)
         self.hidden_to_label = nn.Linear(in_features=128, out_features=6)
+        self.sample_size = sample_size
 
     def forward(self, x):
         out = self.PG(x)
@@ -28,9 +29,11 @@ class MS_TCN2_GRU(nn.Module):
         for i, R in enumerate(self.Rs):
             out = R(F.softmax(out, dim=1))
             outputs = torch.cat((outputs, out.unsqueeze(0)), dim=0)
-        out = self.gru(F.softmax(out, dim=1).transpose(2, 1))[0].squeeze(0)
+        self.sample_size=5
+        out = F.interpolate(F.softmax(out, dim=1), int(out.shape[-1] / self.sample_size))
+        out = self.gru(out.transpose(2, 1))[0].squeeze(0)
         out = self.hidden_to_label(out).unsqueeze(0).transpose(1, 2)
-        outputs = torch.cat((outputs, out.unsqueeze(0)), dim=0)
+        outputs = torch.cat((outputs, F.interpolate(out, outputs.shape[-1]).unsqueeze(0)), dim=0)
         return outputs
 
 
@@ -159,9 +162,10 @@ class DilatedResidualLayer(nn.Module):
 
 class Trainer:
     def __init__(self, num_layers_PG, num_layers_R, num_R, num_f_maps, dim, num_classes, dataset, split,
-                 weighted=False, kl=False, class_weights=None, gru=False, final_gru=False):
+                 weighted=False, kl=False, class_weights=None, gru=False, final_gru=False, sample_size=5):
         if final_gru:
-            self.model = MS_TCN2_GRU(num_layers_PG, num_layers_R, num_R, num_f_maps, dim, num_classes)
+            self.model = MS_TCN2_GRU(num_layers_PG, num_layers_R, num_R, num_f_maps, dim, num_classes,
+                                     sample_size=sample_size)
         else:
             self.model = MS_TCN2(num_layers_PG, num_layers_R, num_R, num_f_maps, dim, num_classes, weighted, gru)
         if class_weights is not None:
@@ -174,23 +178,57 @@ class Trainer:
         self.weighted = weighted
         self.weighted_str = "Weighted" if self.weighted else "Regular"
         self.kl = kl
-        self.kl_str = "KL" if self.kl else "No-KL"
+        self.kl_str = "KL" if self.kl else "NoKL"
         self.class_weights = class_weights is not None
         self.class_weights_str = "ClassWeighting" if self.class_weights else "NoClassWeighting"
         self.gru = gru
-        self.gru_str = "Middle-GRU" if self.gru else "Middle-No-GRU"
+        self.gru_str = "MiddleGRU" if self.gru else "MiddleNoGRU"
         self.final_gru = final_gru
-        self.final_gru_str = "Final-GRU" if self.final_gru else "Final-No-GRU"
-        self.exp_name = "-".join([self.weighted_str, self.kl_str, self.class_weights_str, self.gru_str, self.final_gru_str])
-
+        self.final_gru_str = "FinalGRU" if self.final_gru else "FinalNoGRU"
+        self.sample_size = sample_size
+        self.sample_size_str = f"SampleSize{sample_size}"
+        ext = [self.class_weights_str, self.final_gru_str, self.sample_size_str]
+        self.exp_name = "-".join(ext)
+        self.overlap = [.1, .25, .5]
         logger.add('logs/' + dataset + "_" + split + "_{time}.log")
         logger.add(sys.stdout, colorize=True, format="{message}")
+
+    def clear_ml_reporter(self, clogger, epoch, epoch_loss_train, batch_gen_train, epoch_loss_val, batch_gen_val,
+                          correct_train, total_train, correct_val, total_val, edit_score_val, edit_score_train,
+                          f1s_train, f1s_val):
+        clogger.report_scalar(self.exp_name + " Losses - " + self.fold, "Train Loss", iteration=epoch + 1,
+                              value=epoch_loss_train / len(batch_gen_train.list_of_examples))
+        clogger.report_scalar(self.exp_name + " Losses - " + self.fold, "Validation Loss", iteration=epoch + 1,
+                              value=epoch_loss_val / len(batch_gen_val.list_of_examples))
+        clogger.report_scalar(self.exp_name + " Accuracies - " + self.fold, "Train Accuracy",
+                              iteration=epoch + 1,
+                              value=(float(correct_train) / total_train))
+        clogger.report_scalar(self.exp_name + " Accuracies - " + self.fold, "Validation Accuracy",
+                              iteration=epoch + 1,
+                              value=(float(correct_val) / total_val))
+        clogger.report_scalar("Validation Accuracies - " + self.fold, f"{self.sample_size} sample rate",
+                              iteration=epoch + 1,
+                              value=(float(correct_val) / total_val))
+        clogger.report_scalar("Validation Edit Score - " + self.fold, f"{self.sample_size} sample rate",
+                              iteration=epoch + 1,
+                              value=np.mean(edit_score_val))
+        clogger.report_scalar("Train Edit Score - " + self.fold, f"{self.sample_size} sample rate",
+                              iteration=epoch + 1,
+                              value=np.mean(edit_score_train))
+        for k in range(len(self.overlap)):
+            clogger.report_scalar(self.exp_name + " F1 Validation - " + self.fold,
+                                  f"F1@{int(self.overlap[k] * 100)}",
+                                  iteration=epoch + 1,
+                                  value=(float(f1s_val[k]) / len(batch_gen_val.list_of_examples)))
+            clogger.report_scalar(self.exp_name + " F1 Train - " + self.fold, f"F1@{int(self.overlap[k] * 100)}",
+                                  iteration=epoch + 1,
+                                  value=(float(f1s_train[k]) / len(batch_gen_train.list_of_examples)))
 
     def train(self, save_dir, batch_gen_train, batch_gen_val, num_epochs, batch_size, learning_rate, device, clogger):
         self.model.train()
         self.model.to(device)
         optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
-        best_acc = 0
+        best_f1 = 0
         best_epoch = 0
         for epoch in tqdm(range(num_epochs)):
             if self.weighted:
@@ -202,7 +240,7 @@ class Trainer:
             correct_train = 0
             total_train = 0
             f1s_train = [0, 0, 0]
-            overlap = [.1, .25, .5]
+            edit_score_train = []
             self.model.train()
             batch_i = 0
             batch_loss = 0
@@ -242,30 +280,31 @@ class Trainer:
                     optimizer.step()
                     batch_loss = 0
 
-
                 _, predicted = torch.max(predictions[-1].data, 1)
                 correct_train += ((predicted == batch_target).float() * mask[:, 0, :].squeeze(1)).sum().item()
                 total_train += torch.sum(mask[:, 0, :]).item()
                 tp, fp, fn = np.zeros(3), np.zeros(3), np.zeros(3)
 
-                for s in range(len(overlap)):
-                    tp1, fp1, fn1 = f_score(predicted.view(-1).tolist(), batch_target.view(-1).tolist(), overlap[s],
+                for s in range(len(self.overlap)):
+                    tp1, fp1, fn1 = f_score(predicted.view(-1).tolist(), batch_target.view(-1).tolist(), self.overlap[s],
                                             train=True)
                     tp[s] += tp1
                     fp[s] += fp1
                     fn[s] += fn1
-                for s in range(len(overlap)):
+                for s in range(len(self.overlap)):
                     precision = tp[s] / float(tp[s] + fp[s])
                     recall = tp[s] / float(tp[s] + fn[s])
                     f1 = 2.0 * (precision * recall) / (precision + recall)
                     f1 = np.nan_to_num(f1) * 100
                     f1s_train[s] += f1
 
+                edit_score_train.append(edit_score(predicted.view(-1).tolist(), batch_target.view(-1).tolist()))
             ####################### Validation #######################
             epoch_loss_val = 0
             correct_val = 0
             total_val = 0
             f1s_val = [0, 0, 0]
+            edit_score_val = []
             self.model.eval()
             while batch_gen_val.has_next():
                 batch_input, batch_target, mask = batch_gen_val.next_batch(batch_size)
@@ -299,26 +338,31 @@ class Trainer:
                 correct_val += ((predicted == batch_target).float() * mask[:, 0, :].squeeze(1)).sum().item()
                 total_val += torch.sum(mask[:, 0, :]).item()
                 tp, fp, fn = np.zeros(3), np.zeros(3), np.zeros(3)
-                for s in range(len(overlap)):
-                    tp1, fp1, fn1 = f_score(predicted.view(-1).tolist(), batch_target.view(-1).tolist(), overlap[s],
+                for s in range(len(self.overlap)):
+                    tp1, fp1, fn1 = f_score(predicted.view(-1).tolist(), batch_target.view(-1).tolist(), self.overlap[s],
                                             train=True)
                     tp[s] += tp1
                     fp[s] += fp1
                     fn[s] += fn1
-                for s in range(len(overlap)):
+                for s in range(len(self.overlap)):
                     precision = tp[s] / float(tp[s] + fp[s])
                     recall = tp[s] / float(tp[s] + fn[s])
                     f1 = 2.0 * (precision * recall) / (precision + recall)
                     f1 = np.nan_to_num(f1) * 100
                     f1s_val[s] += f1
-
+                edit_score_val.append(edit_score(predicted.view(-1).tolist(), batch_target.view(-1).tolist()))
             batch_gen_train.reset()
             batch_gen_val.reset()
-            if float(correct_val) / total_val > best_acc:
-                best_acc = float(correct_val) / total_val
+            if (float(f1s_val[-1]) / len(batch_gen_val.list_of_examples)) > best_f1:
+                best_f1 = (float(f1s_val[-1]) / len(batch_gen_val.list_of_examples))
                 best_epoch = epoch
                 torch.save(self.model.state_dict(), save_dir + "/best.model")
                 torch.save(optimizer.state_dict(), save_dir + "/best.opt")
+
+            self.clear_ml_reporter(clogger, epoch, epoch_loss_train, batch_gen_train, epoch_loss_val, batch_gen_val,
+                              correct_train, total_train, correct_val, total_val, edit_score_val, edit_score_train,
+                              f1s_train, f1s_val)
+
             logger.info(
                 "[epoch %d]: epoch loss train set = %f,   acc_train = %f" % (
                     epoch + 1, epoch_loss_train / len(batch_gen_train.list_of_examples),
@@ -327,25 +371,8 @@ class Trainer:
                 "[epoch %d]: epoch loss validation set = %f,   acc_val = %f" % (
                     epoch + 1, epoch_loss_val / len(batch_gen_val.list_of_examples),
                     float(correct_val) / total_val))
-            clogger.report_scalar(self.exp_name + " Losses - " + self.fold, "Train Loss", iteration=epoch + 1,
-                                  value=epoch_loss_train / len(batch_gen_train.list_of_examples))
-            clogger.report_scalar(self.exp_name + " Losses - " + self.fold, "Validation Loss", iteration=epoch + 1,
-                                  value=epoch_loss_val / len(batch_gen_val.list_of_examples))
-            clogger.report_scalar(self.exp_name + " Accuracies - " + self.fold, "Train Accuracy",
-                                  iteration=epoch + 1,
-                                  value=(float(correct_train) / total_train))
-            clogger.report_scalar(self.exp_name + " Accuracies - " + self.fold, "Validation Accuracy",
-                                  iteration=epoch + 1,
-                                  value=(float(correct_val) / total_val))
-            for k in range(len(overlap)):
-                clogger.report_scalar(self.exp_name + " F1 Validation - " + self.fold,
-                                      f"F1@{int(overlap[k] * 100)}",
-                                      iteration=epoch + 1,
-                                      value=(float(f1s_val[k]) / len(batch_gen_val.list_of_examples)))
-                clogger.report_scalar(self.exp_name + " F1 Train - " + self.fold, f"F1@{int(overlap[k] * 100)}",
-                                      iteration=epoch + 1,
-                                      value=(float(f1s_train[k]) / len(batch_gen_train.list_of_examples)))
-        logger.info(f"{self.exp_name} Run: Best Validation accuracy = %f at epoch = %f" % (best_acc, best_epoch))
+
+        logger.info(f"{self.exp_name} Run: Best Validation F1@50 = %f at epoch = %f" % (best_f1, best_epoch + 1))
 
     def predict(self, model_dir, results_dir, features_path, vid_list_file, epoch, actions_dict, device, sample_rate):
         self.model.eval()
@@ -353,6 +380,8 @@ class Trainer:
             self.model.to(device)
             self.model.load_state_dict(torch.load(model_dir + "/best.model"))
             list_of_vids = vid_list_file
+            correct_test = 0
+            edit_score_test = 0
             for vid in list_of_vids:
                 # print vid
                 features = np.load(features_path + vid)

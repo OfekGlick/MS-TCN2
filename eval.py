@@ -4,6 +4,8 @@
 import numpy as np
 import argparse
 
+gestures = {f"G{i}": i for i in range(6)}
+
 
 def read_file(path):
     with open(path, 'r') as f:
@@ -71,9 +73,13 @@ def levenstein(p, y, norm=False):
     return score
 
 
-def edit_score(recognized, ground_truth, norm=True, bg_class=["background"]):
+def edit_score(recognized, ground_truth, norm=True, test=False, bg_class=["background"]):
     P, _, _ = get_labels_start_end_time(recognized, bg_class)
-    Y, _, _ = get_labels_start_end_time(ground_truth, bg_class)
+    if test:
+        Y, _, _ = custom_get_labels_start_end_time(ground_truth, bg_class)
+        Y = [gestures[row] for row in Y]
+    else:
+        Y, _, _ = get_labels_start_end_time(ground_truth, bg_class)
     return levenstein(P, Y, norm)
 
 
@@ -83,6 +89,7 @@ def f_score(recognized, ground_truth, overlap, train=False, bg_class=["backgroun
         y_label, y_start, y_end = get_labels_start_end_time(ground_truth, bg_class)
     else:
         y_label, y_start, y_end = custom_get_labels_start_end_time(ground_truth, bg_class)
+        y_label = [gestures[row] for row in y_label]
 
     tp = 0
     fp = 0
