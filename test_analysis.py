@@ -43,77 +43,82 @@ def accuracy(pred, gt):
     gt = gt[:length].copy()
     return (pred == gt).sum() / length
 
+def calc_test_performance(exp, csv_name):
+    df = {"fold": [],
+          "sample_size": [],
+          "edit_score_average": [],
+          "mean_accuracy": [],
+          "f1@10": [],
+          "f1@25": [],
+          "f1@50": []
+          }
 
-df = {"fold": [],
-      "sample_size": [],
-      "edit_score_average": [],
-      "mean_accuracy": [],
-      "f1@10": [],
-      "f1@25": [],
-      "f1@50": []
-      }
+    pred_path = f"/home/student/FinalProject/Ofek/results/{exp}"
+    gt_path = f"/datashare/APAS/transcriptions_gestures/"
+    folds = os.listdir(pred_path)
+    overlap = [.1, .25, .50]
+    for fold in sorted(folds):
+        samples = os.listdir(os.path.join(pred_path, fold))
+        print(f"Fold: {fold}")
+        for sample in sorted(samples, key=lambda x: int(x.split()[-1])):
+            print(f"\tTest: {sample}")
+            preds = os.listdir(os.path.join(pred_path, fold, sample))
+            edit_avg = []
+            f1s = [0, 0, 0]
+            acc = []
+            for file in tqdm(preds):
+                with open(os.path.join(pred_path, fold, sample, file), 'r') as pred_file:
+                    with open(os.path.join(gt_path, file + ".txt")) as gt_file:
+                        pred_data = [gestures[row] for row in pred_file.readlines()[1].split()]
+                        gt_data = [row.strip() for row in gt_file.readlines()]
+                        gt_data_np = convert_file_to_list(gt_data)
 
-pred_path = f"/home/student/FinalProject/Ofek/results/exp46"
-gt_path = f"/datashare/APAS/transcriptions_gestures/"
-folds = os.listdir(pred_path)
-overlap = [.1, .25, .50]
-for fold in sorted(folds):
-    samples = os.listdir(os.path.join(pred_path, fold))
-    print(f"Fold: {fold}")
-    for sample in sorted(samples, key=lambda x: int(x.split()[-1])):
-        print(f"\tTest: {sample}")
-        preds = os.listdir(os.path.join(pred_path, fold, sample))
-        edit_avg = []
-        f1s = [0, 0, 0]
-        acc = []
-        for file in tqdm(preds):
-            with open(os.path.join(pred_path, fold, sample, file), 'r') as pred_file:
-                with open(os.path.join(gt_path, file + ".txt")) as gt_file:
-                    pred_data = [gestures[row] for row in pred_file.readlines()[1].split()]
-                    gt_data = [row.strip() for row in gt_file.readlines()]
-                    gt_data_np = convert_file_to_list(gt_data)
+                        acc.append(accuracy(pred_data, gt_data_np))
 
-                    acc.append(accuracy(pred_data, gt_data_np))
+                        # plot_segments(pred_data, gt_data)
+                        edit_avg.append(edit_score(pred_data, gt_data, test=True))
+                        tp, fp, fn = np.zeros(3), np.zeros(3), np.zeros(3)
+                        for s in range(len(overlap)):
+                            tp1, fp1, fn1 = f_score(pred_data, gt_data, overlap[s], train=False)
+                            tp[s] += tp1
+                            fp[s] += fp1
+                            fn[s] += fn1
+                        for s in range(len(overlap)):
+                            precision = tp[s] / float(tp[s] + fp[s])
+                            recall = tp[s] / float(tp[s] + fn[s])
+                            f1 = 2.0 * (precision * recall) / (precision + recall)
+                            f1 = np.nan_to_num(f1) * 100
+                            f1s[s] += f1
+            df['fold'].append(fold)
+            df['sample_size'].append(sample.split()[-1])
+            df['edit_score_average'].append(np.mean(edit_avg))
+            df['mean_accuracy'].append(np.mean(acc) * 100)
+            print(f"\t\tEdit score average: {np.mean(edit_avg)}")
+            print(f"\t\tEdit score Max: {np.max(edit_avg)}")
+            print(f"\t\tEdit score Min: {np.min(edit_avg)}")
+            print(f"\t\tMean Accuracy: {np.mean(acc)}")
+            for i, k in enumerate(overlap):
+                print(f"\t\tf1@{int(k * 100)}: {f1s[i] / len(preds)}")
+                df[f"f1@{int(k * 100)}"].append(f1s[i] / len(preds))
 
-                    # plot_segments(pred_data, gt_data)
-                    edit_avg.append(edit_score(pred_data, gt_data, test=True))
-                    tp, fp, fn = np.zeros(3), np.zeros(3), np.zeros(3)
-                    for s in range(len(overlap)):
-                        tp1, fp1, fn1 = f_score(pred_data, gt_data, overlap[s], train=False)
-                        tp[s] += tp1
-                        fp[s] += fp1
-                        fn[s] += fn1
-                    for s in range(len(overlap)):
-                        precision = tp[s] / float(tp[s] + fp[s])
-                        recall = tp[s] / float(tp[s] + fn[s])
-                        f1 = 2.0 * (precision * recall) / (precision + recall)
-                        f1 = np.nan_to_num(f1) * 100
-                        f1s[s] += f1
-        df['fold'].append(fold)
-        df['sample_size'].append(sample.split()[-1])
-        df['edit_score_average'].append(np.mean(edit_avg))
-        df['mean_accuracy'].append(np.mean(acc) * 100)
-        print(f"\t\tEdit score average: {np.mean(edit_avg)}")
-        print(f"\t\tEdit score Max: {np.max(edit_avg)}")
-        print(f"\t\tEdit score Min: {np.min(edit_avg)}")
-        print(f"\t\tMean Accuracy: {np.mean(acc)}")
-        for i, k in enumerate(overlap):
-            print(f"\t\tf1@{int(k * 100)}: {f1s[i] / len(preds)}")
-            df[f"f1@{int(k * 100)}"].append(f1s[i] / len(preds))
+    df = pd.DataFrame.from_dict(df)
+    temp = df.groupby("sample_size").mean().reset_index()
+    temp['sample_size'] = temp['sample_size'].astype(int)
+    temp.to_csv(f"{csv_name}.csv", index=False)
+    return temp
 
-df = pd.DataFrame.from_dict(df)
-temp = df.groupby("sample_size").mean().reset_index()
-temp['sample_size'] = temp['sample_size'].astype(int)
-temp.to_csv("basekune.csv", index=False)
+def plot_trade_off_graphs(df):
+    df.sort_values(by='sample_size')
+    plt.plot(df['sample_size'], df['edit_score_average'], marker='o', label='Edit score average')
+    plt.plot(df['sample_size'], df['mean_accuracy'], label='Accuracy average', marker='o')
+    plt.plot(df['sample_size'], df['f1@10'], label='Mean F1@10', marker='o')
+    plt.plot(df['sample_size'], df['f1@25'], label='Mean F1@25', marker='o')
+    plt.plot(df['sample_size'], df['f1@50'], label='Mean F1@50', marker='o')
+    plt.xlabel("Sample size")
+    plt.xticks([1, 5, 10, 30, 60])
+    plt.legend()
+    plt.show()
 
-temp.sort_values(by='sample_size')
-plt.plot(temp['sample_size'], temp['edit_score_average'], marker='o', label='Edit score average')
-plt.plot(temp['sample_size'], temp['mean_accuracy'], label='Accuracy average', marker='o')
-plt.plot(temp['sample_size'], temp['f1@10'], label='Mean F1@10', marker='o')
-plt.plot(temp['sample_size'], temp['f1@25'], label='Mean F1@25', marker='o')
-plt.plot(temp['sample_size'], temp['f1@50'], label='Mean F1@50', marker='o')
-plt.xlabel("Sample size")
-plt.xticks([1, 5, 10, 30, 60])
-plt.legend()
-plt.show()
-ofek = 5
+if __name__ == '__main__':
+    df = calc_test_performance("exp46","baseline")
+    plot_trade_off_graphs(df)
