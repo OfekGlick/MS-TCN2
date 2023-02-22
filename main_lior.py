@@ -185,7 +185,7 @@ def main():
                       final_gru=True, sample_size=5)
 
     if args.action == "baseline":
-         for val_path_fold, test_path_fold, features_path_fold in fold_files:
+        for val_path_fold, test_path_fold, features_path_fold in fold_files:
             run_train(val_path_fold=val_path_fold, test_path_fold=test_path_fold,
                       features_path_fold=features_path_fold, device=device, results_dir=results_dir,
                       model_dir=model_dir,

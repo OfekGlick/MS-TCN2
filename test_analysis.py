@@ -16,7 +16,7 @@ def convert_file_to_list(gt_data):
     return ground_truth
 
 
-def plot_segments(pred, gt):
+def plot_segments(pred, gt, title):
     colors = ['red', 'blue', 'green', 'pink', 'orange', 'black']
 
     y_label, y_start, y_end = custom_get_labels_start_end_time(gt)
@@ -28,12 +28,13 @@ def plot_segments(pred, gt):
     df_2.end_time = df_2.end_time - 1
 
     for i in range(len(y_label)):
-        plt.plot([df_1['start_time'][i], df_1['end_time'][i]], [0, 0], color=colors[gestures[df_1['label'][i]]],
-                 linewidth=4)
+        plt.plot([df_1['start_time'][i], df_1['end_time'][i]], [2, 2], color=colors[gestures[df_1['label'][i]]],
+                 linewidth=15)
 
     for i in range(len(p_label)):
-        plt.plot([df_2['start_time'][i], df_2['end_time'][i]], [2, 2], color=colors[df_2['label'][i]], linewidth=4)
+        plt.plot([df_2['start_time'][i], df_2['end_time'][i]], [0, 0], color=colors[df_2['label'][i]], linewidth=15)
     plt.ylim(-2, 10)
+    plt.title(title)
     plt.show()
 
 
@@ -42,6 +43,7 @@ def accuracy(pred, gt):
     pred = np.array(pred[:length].copy())
     gt = gt[:length].copy()
     return (pred == gt).sum() / length
+
 
 def calc_test_performance(exp, csv_name):
     df = {"fold": [],
@@ -57,16 +59,20 @@ def calc_test_performance(exp, csv_name):
     gt_path = f"/datashare/APAS/transcriptions_gestures/"
     folds = os.listdir(pred_path)
     overlap = [.1, .25, .50]
-    for fold in sorted(folds):
+    for fold in sorted(folds[:1]):
         samples = os.listdir(os.path.join(pred_path, fold))
         print(f"Fold: {fold}")
+        i = 1
         for sample in sorted(samples, key=lambda x: int(x.split()[-1])):
+            i += 1
+            if i == 5:
+                break
             print(f"\tTest: {sample}")
             preds = os.listdir(os.path.join(pred_path, fold, sample))
             edit_avg = []
             f1s = [0, 0, 0]
             acc = []
-            for file in tqdm(preds):
+            for file in tqdm(preds[:5]):
                 with open(os.path.join(pred_path, fold, sample, file), 'r') as pred_file:
                     with open(os.path.join(gt_path, file + ".txt")) as gt_file:
                         pred_data = [gestures[row] for row in pred_file.readlines()[1].split()]
@@ -75,7 +81,7 @@ def calc_test_performance(exp, csv_name):
 
                         acc.append(accuracy(pred_data, gt_data_np))
 
-                        # plot_segments(pred_data, gt_data)
+                        plot_segments(pred_data, gt_data, " - ".join([file, csv_name]))
                         edit_avg.append(edit_score(pred_data, gt_data, test=True))
                         tp, fp, fn = np.zeros(3), np.zeros(3), np.zeros(3)
                         for s in range(len(overlap)):
@@ -107,6 +113,7 @@ def calc_test_performance(exp, csv_name):
     temp.to_csv(f"{csv_name}.csv", index=False)
     return temp
 
+
 def plot_trade_off_graphs(df):
     df.sort_values(by='sample_size')
     plt.plot(df['sample_size'], df['edit_score_average'], marker='o', label='Edit score average')
@@ -119,6 +126,9 @@ def plot_trade_off_graphs(df):
     plt.legend()
     plt.show()
 
+
 if __name__ == '__main__':
-    df = calc_test_performance("exp46","baseline")
+    df = calc_test_performance("exp44", "Baseline")
+    # calc_test_performance("exp46", "Chosen")
+
     plot_trade_off_graphs(df)
