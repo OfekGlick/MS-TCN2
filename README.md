@@ -32,7 +32,7 @@ The script assumes the following paths:
 899 970 G4
 ```
 
-2. The video features are providede in the absolute path `/datashare/APAS/features/` where the directory tree is the following:
+2. The video features are provided in the absolute path `/datashare/APAS/features/` where the directory tree is the following:
 ```
 root
 |->fold0
@@ -43,7 +43,7 @@ root
 ```
 and each fold folder contains all the features of all the videos.
 
-3. The Cross validation splitting methods absolute path `/datashare/APAS/folds/` where the directory tree is the following:
+3. The Cross validation splitting methods are provided in the absolute path `/datashare/APAS/folds/` where the directory tree is the following:
 
 ```
 root
@@ -58,10 +58,11 @@ root
 |->test 3
 |->test 4
 ```
-each text file contains the list of videos relevant to its own fold.
+each text file contains list of videos relevant to its own fold.
 
 
-it can be run using the following commands:
+##### Runing the model:
+To reproduce the results use the following commands:
 
 1. To get baseline results run:
 ```
@@ -75,12 +76,14 @@ main.py --action train
 ```
 main.py --action train_tradeoff
 ```
-All the above commands include performing prediction over the test data
+All the above commands include performing prediction over the test data.
 
 #### test_analysis.py
-This script outputs assumes the same dir structure as `main.py` and outputs all of the metrics described in the report such as Accuracy, F1 and Edit Score.
+This script assumes the same dir structure as `main.py` and outputs all of the metrics described in the report such as Accuracy, F1 and Edit Score over the test data (assumes predictions were already generated).
 Additionally, this scripts plots segmentation plots and metric graphs.
 
 #### video_creator.py
-This script was used to annotated videos with the groudn truth labels and their predicted labels.
+This script was used to annotate videos with the ground truth labels and their predicted labels.
 
+### Annotated videos:
+This git also includes 3 anotated videos (mp4 files). Those videos were annotated using our final trained model.
