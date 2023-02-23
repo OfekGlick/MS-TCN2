@@ -22,7 +22,6 @@ The file which does all of the heavy lifting is `main.py`. <br>
 
 The script assumes labels are provided in a directory called transcriptions_gestures where each video has a corresponding text file with the same name as the video, holding the ground truth labels in the following frame format:
 
-where `videos` is a directory in the same dir as `main.py` and it contains video files. In the `videos` directory there are two other directories called `tools_left` and `tools_right`, each contaning a corrosponding text file with the same name as a video in `videos` dir and the text files contain the labels in frame format:
 ```
 0 524 G0
 525 662 G1
