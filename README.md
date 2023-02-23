@@ -21,7 +21,7 @@ The file which does all of the heavy lifting is `main.py`. <br>
 `main.py` is responsible for running the baseline and modified architectures , performing gesture recognition over the data videos. It also reports loss and accuracy over train and validation sets and generates graphs in clearML. <br>
 
 The script assumes labels are provided in a directory called transcriptions_gestures where each video has a corresponding text file with the same name as the video, holding the ground truth labels in the following frame format:
-```
+
 where `videos` is a directory in the same dir as `main.py` and it contains video files. In the `videos` directory there are two other directories called `tools_left` and `tools_right`, each contaning a corrosponding text file with the same name as a video in `videos` dir and the text files contain the labels in frame format:
 ```
 0 524 G0
@@ -31,16 +31,19 @@ where `videos` is a directory in the same dir as `main.py` and it contains video
 899 970 G4
 ```
 it can be run using the following commands:
-```
+
 1. To get baseline results run:
+```
 main.py --action baseline 
-
+```
 2. To train the new architecture (our modification) run:
+```
 main.py --action train
-
+```
 3. To run the tradeoff experiment run:
+```
 main.py --action train_tradeoff
-
+```
 All the above commands include performing prediction over the test data
 
 ```
