@@ -18,9 +18,11 @@ Suggest a modification to MSTCN++ aiming to improve performances of gesture reco
 ### Reproduce results
 #### main.py
 The file which does all of the heavy lifting is `main.py`. <br>
-`main.py` is responsible for running the baseline and modified architectures , performing gesture recognition over the data videos. It also reports loss and accuracy over train and validation sets and generates graphs in clearML. <br>
+`main.py` is responsible for running the baseline and modified architectures, performing gesture recognition over the data videos. It also reports loss and accuracy over train and validation sets and generates graphs in clearML. <br>
 
-The script assumes labels are provided in a directory called transcriptions_gestures where each video has a corresponding text file with the same name as the video, holding the ground truth labels in the following frame format:
+
+The script assumes the following paths:
+1. labels are provided in a directory with the absolute path `/datashare/APAS/transcriptions_gestures/` where each video has a corresponding text file with the same name as the video, holding the ground truth labels in the following frame format:
 
 ```
 0 524 G0
@@ -29,6 +31,36 @@ The script assumes labels are provided in a directory called transcriptions_gest
 809 898 G3
 899 970 G4
 ```
+
+2. The video features are providede in the absolute path `/datashare/APAS/features/` where the directory tree is the following:
+```
+root
+|->fold0
+|->fold1
+|->fold2
+|->fold3
+|->fold4
+```
+and each fold folder contains all the features of all the videos.
+
+3. The Cross validation splitting methods absolute path `/datashare/APAS/folds/` where the directory tree is the following:
+
+```
+root
+|->valid 0
+|->valid 1
+|->valid 2
+|->valid 3
+|->valid 4
+|->test 0
+|->test 1
+|->test 2
+|->test 3
+|->test 4
+```
+each text file contains the list of videos relevant to its own fold.
+
+
 it can be run using the following commands:
 
 1. To get baseline results run:
@@ -45,4 +77,3 @@ main.py --action train_tradeoff
 ```
 All the above commands include performing prediction over the test data
 
-```
