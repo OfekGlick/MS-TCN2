@@ -11,7 +11,7 @@ Suggest a modification to MSTCN++ aiming to improve performances of gesture reco
  </ul>
 
 ## How to run?
-#### Prepare envoriment
+#### Prepare environment
 1. Clone this project
 2. pip/conda install the requirments.txt file
 
