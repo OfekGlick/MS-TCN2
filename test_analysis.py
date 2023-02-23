@@ -59,7 +59,7 @@ def calc_test_performance(exp, csv_name):
     gt_path = f"/datashare/APAS/transcriptions_gestures/"
     folds = os.listdir(pred_path)
     overlap = [.1, .25, .50]
-    for fold in sorted(folds[:1]):
+    for fold in sorted(folds):
         samples = os.listdir(os.path.join(pred_path, fold))
         print(f"Fold: {fold}")
         i = 1
@@ -72,7 +72,7 @@ def calc_test_performance(exp, csv_name):
             edit_avg = []
             f1s = [0, 0, 0]
             acc = []
-            for file in tqdm(preds[:5]):
+            for file in tqdm(preds):
                 with open(os.path.join(pred_path, fold, sample, file), 'r') as pred_file:
                     with open(os.path.join(gt_path, file + ".txt")) as gt_file:
                         pred_data = [gestures[row] for row in pred_file.readlines()[1].split()]
@@ -129,6 +129,6 @@ def plot_trade_off_graphs(df):
 
 if __name__ == '__main__':
     df = calc_test_performance("exp44", "Baseline")
-    # calc_test_performance("exp46", "Chosen")
+    calc_test_performance("exp46", "Chosen")
 
     plot_trade_off_graphs(df)
