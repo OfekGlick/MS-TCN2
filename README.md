@@ -1,6 +1,6 @@
 # Computer-vision - Final Project
 ## Goal
-Suggest a modification to MSTCN++ aiming to improve performances of gesture recognition task over specific data of physicians performing practice surgury operations.<br>
+Suggest a modification to MSTCN++ aiming to improve performances of gesture recognition task over specific data of physicians performing practice surgery operations.<br>
 
 ## Description
 <ul>
