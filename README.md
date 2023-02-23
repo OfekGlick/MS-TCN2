@@ -77,3 +77,7 @@ main.py --action train_tradeoff
 ```
 All the above commands include performing prediction over the test data
 
+#### test_analysis.py
+This script outputs assumes the same dir structure as `main.py` and outputs all of the metrics described in the report such as Accuracy, F1 and Edit Score.
+Additionally, this scripts plots segmentation plots and metric graphs.
+
