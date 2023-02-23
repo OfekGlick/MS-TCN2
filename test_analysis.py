@@ -129,6 +129,5 @@ def plot_trade_off_graphs(df):
 
 if __name__ == '__main__':
     df = calc_test_performance("exp44", "Baseline")
-    calc_test_performance("exp46", "Chosen")
-
+    
     plot_trade_off_graphs(df)
