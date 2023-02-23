@@ -18,9 +18,10 @@ Suggest a modification to MSTCN++ aiming to improve performances of gesture reco
 ### Reproduce results
 #### main.py
 The file which does all of the heavy lifting is `main.py`. <br>
-`main.py` is responsible for running the baseline and modified architectures , performing gesture recognition over the data videos. It also reports loss and accuracy over train and validation sets and generates graphs in clearML. <br>
+`main.py` is responsible for running the baseline and modified architectures, performing gesture recognition over the data videos. It also reports loss and accuracy over train and validation sets and generates graphs in clearML. <br>
 
-The script assumes labels are provided in a directory called transcriptions_gestures where each video has a corresponding text file with the same name as the video, holding the ground truth labels in the following frame format:
+
+The script assumes labels are provided in a directory with the absolute path `/datashare/APAS/transcriptions_gestures/` where each video has a corresponding text file with the same name as the video, holding the ground truth labels in the following frame format:
 
 ```
 0 524 G0
