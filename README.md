@@ -77,4 +77,3 @@ main.py --action train_tradeoff
 ```
 All the above commands include performing prediction over the test data
 
-```
