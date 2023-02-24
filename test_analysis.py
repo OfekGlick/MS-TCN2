@@ -35,6 +35,7 @@ def plot_segments(pred, gt, title):
         plt.plot([df_2['start_time'][i], df_2['end_time'][i]], [0, 0], color=colors[df_2['label'][i]], linewidth=15)
     plt.ylim(-2, 10)
     plt.title(title)
+    plt.axis("off")
     plt.show()
 
 
@@ -62,11 +63,7 @@ def calc_test_performance(exp, csv_name):
     for fold in sorted(folds):
         samples = os.listdir(os.path.join(pred_path, fold))
         print(f"Fold: {fold}")
-        i = 1
         for sample in sorted(samples, key=lambda x: int(x.split()[-1])):
-            i += 1
-            if i == 5:
-                break
             print(f"\tTest: {sample}")
             preds = os.listdir(os.path.join(pred_path, fold, sample))
             edit_avg = []
@@ -128,6 +125,6 @@ def plot_trade_off_graphs(df):
 
 
 if __name__ == '__main__':
-    df = calc_test_performance("exp44", "Baseline")
+    df = calc_test_performance("exp46", "Baseline")
     
     plot_trade_off_graphs(df)
