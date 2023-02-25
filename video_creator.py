@@ -28,8 +28,9 @@ def plot_segments(pred, gt, index):
 
     for i in range(len(p_label)):
         plt.plot([df_2['start_time'][i], df_2['end_time'][i]], [0, 0], color=colors[df_2['label'][i]], linewidth=15)
-
-    plt.vlines(x=index, ymin=1.2, ymax=1.5,
+    if index <= 110:
+        index = 110
+    plt.vlines(x=index-110, ymin=1.2, ymax=1.5,
                colors='darkblue')
     plt.ylim(-2, 3)
     plt.text(0, 0.57, "GT", fontsize=12,verticalalignment='center', transform= fig.transFigure)
@@ -39,7 +40,6 @@ def plot_segments(pred, gt, index):
     canvas = FigureCanvas(fig)
     ax = fig.gca()
     canvas.draw()
-
     image = np.frombuffer(canvas.tostring_rgb(), dtype='uint8')
     image = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
     return image[100:320,:,:]
@@ -80,7 +80,6 @@ def draw_text(img, text,
 
 def main():
     video_names = [f'P0{i}_balloon1' for i in [16, 20, 22]]
-
     gestures = {"no gesture": "G0",
                 "needle passing": "G1",
                 "pull the suture": "G2",
